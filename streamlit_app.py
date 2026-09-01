@@ -36,11 +36,13 @@ if uploaded:
         confidence = st.slider("Minimum confidence", .05, .95, .25, .05)
         class_text = st.text_input("Custom bob class ID (optional)", "")
         smooth_window = st.slider("Smoothing window (frames)", 3, 101, 21, 2)
+        max_gap = st.slider("Maximum interpolated occlusion (frames)", 0, 60, 10,
+                            help="Longer gaps stay missing and are excluded from analysis rather than invented.")
     if st.button("Run Detection & Tracking", type="primary"):
         progress = st.progress(0, text="Loading YOLO and processing frames…")
         detector = YOLOBobDetector(weights, confidence, int(class_text) if class_text.strip() else None)
         try:
-            result = track_video(video_path, detector, Path(tempfile.gettempdir()) / "pendulum_tracked.mp4", lambda p: progress.progress(p, text=f"Processing {p:.0%}"))
+            result = track_video(video_path, detector, Path(tempfile.gettempdir()) / "pendulum_tracked.mp4", lambda p: progress.progress(p, text=f"Processing {p:.0%}"), max_gap)
         except Exception as exc:
             st.exception(exc); st.stop()
         st.session_state.result = result
@@ -49,6 +51,9 @@ if uploaded:
         result = st.session_state.result
         st.subheader("Tracking result")
         for warning in result.warnings: st.warning(warning)
+        st.subheader("Frame-by-frame x, y data")
+        st.caption("`raw_*` columns are original measurements; x/y columns contain short-gap interpolation only when `tracking_status` says `interpolated`. Long gaps remain blank.")
+        st.dataframe(result.data, use_container_width=True, height=300)
         if result.processed_video and result.processed_video.exists(): st.video(result.processed_video.read_bytes())
         pivot_cols = st.columns(2)
         pivot_x = pivot_cols[0].number_input("Pivot x (px)", value=float(metadata.width / 2))

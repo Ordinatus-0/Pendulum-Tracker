@@ -19,6 +19,20 @@ def transform_coordinates(data: pd.DataFrame, pivot_x: float, pivot_y: float, in
 
 def smooth_coordinates(data: pd.DataFrame, window: int = 21, polyorder: int = 3) -> pd.DataFrame:
     result = data.copy()
+    valid = result[["x_rel_px", "y_rel_px"]].notna().all(axis=1)
+    if not valid.all():
+        # Never fill unmeasured long gaps for analysis; smooth each valid run only.
+        result["x_smooth_px"], result["y_smooth_px"] = result.x_rel_px, result.y_rel_px
+        run_ids = valid.ne(valid.shift(fill_value=False)).cumsum()
+        for _, run in result[valid].groupby(run_ids[valid]):
+            if len(run) >= polyorder + 2:
+                run_window = min(window if window % 2 else window - 1, len(run) if len(run) % 2 else len(run) - 1)
+                if run_window >= polyorder + 2:
+                    result.loc[run.index, "x_smooth_px"] = savgol_filter(run.x_rel_px, run_window, polyorder)
+                    result.loc[run.index, "y_smooth_px"] = savgol_filter(run.y_rel_px, run_window, polyorder)
+        result["r_smooth_px"] = np.hypot(result.x_smooth_px, result.y_smooth_px)
+        result["theta_smooth_rad"] = np.unwrap(np.arctan2(result.y_smooth_px, result.x_smooth_px))
+        return result
     window = min(window if window % 2 else window - 1, len(result) if len(result) % 2 else len(result) - 1)
     if window < polyorder + 2 or window < 3:
         result["x_smooth_px"], result["y_smooth_px"] = result.x_rel_px, result.y_rel_px

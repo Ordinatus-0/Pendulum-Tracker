@@ -60,4 +60,14 @@ def test_two_videos_complete_tracking_pipeline(tmp_path: Path):
         assert result.data.tracking_status.eq("detected").sum() == 24 - len(misses)
         assert result.data.tracking_status.eq("interpolated").sum() == len(misses)
         assert result.data[["x_px", "y_px"]].notna().all().all()
+        assert result.data.loc[result.data.tracking_status.eq("interpolated"), "raw_x_px"].isna().all()
         assert output.exists() and output.stat().st_size > 0
+
+
+def test_long_or_unbounded_tracking_gaps_are_never_fabricated(tmp_path: Path):
+    video = tmp_path / "long_gap.mp4"
+    make_pendulum_video(video, 0.0)
+    result = track_video(video, SyntheticBobDetector({0, 1, 8, 9, 10, 11, 12}), max_gap_frames=3)
+    assert result.data.tracking_status.eq("interpolated").sum() == 0
+    assert result.data.tracking_status.eq("missing").sum() == 7
+    assert result.data.loc[result.data.tracking_status.eq("missing"), "x_px"].isna().all()

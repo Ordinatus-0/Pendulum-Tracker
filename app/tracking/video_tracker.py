@@ -39,13 +39,28 @@ def validate_video(path: str | Path) -> VideoMetadata:
     return video_metadata(path)
 
 
-def interpolate_missing(data: pd.DataFrame) -> pd.DataFrame:
-    """Fill short/long gaps for visualization while retaining an explicit status."""
+def interpolate_missing(data: pd.DataFrame, max_gap_frames: int = 10) -> pd.DataFrame:
+    """Fill only short internal gaps and preserve unresolved missing measurements.
+
+    A long occlusion, or a gap at either end, has no measured bounding points on
+    both sides and must remain missing rather than being presented as data.
+    """
     result = data.copy()
-    coordinate_columns = ["x_px", "y_px", "bbox_width_px", "bbox_height_px", "confidence"]
-    missing = result["tracking_status"].eq("missing")
-    result[coordinate_columns] = result[coordinate_columns].interpolate(limit_direction="both")
-    result.loc[missing & result["x_px"].notna(), "tracking_status"] = "interpolated"
+    coordinate_columns = ["x_px", "y_px", "bbox_width_px", "bbox_height_px"]
+    for column in coordinate_columns:
+        result[f"raw_{column}"] = result[column]
+    result["raw_confidence"] = result["confidence"]
+    missing = result["tracking_status"].eq("missing").to_numpy()
+    starts = np.flatnonzero(missing & np.r_[True, ~missing[:-1]])
+    ends = np.flatnonzero(missing & np.r_[~missing[1:], True])
+    for start, end in zip(starts, ends):
+        gap_size = end - start + 1
+        has_bracketing_measurements = start > 0 and end < len(result) - 1
+        if gap_size <= max_gap_frames and has_bracketing_measurements:
+            for column in coordinate_columns:
+                before, after = result.at[start - 1, column], result.at[end + 1, column]
+                result.loc[start:end, column] = np.linspace(before, after, gap_size + 2)[1:-1]
+            result.loc[start:end, "tracking_status"] = "interpolated"
     return result
 
 
@@ -81,7 +96,7 @@ def _write_overlay_video(path: str | Path, data: pd.DataFrame, metadata: VideoMe
 
 
 def track_video(path: str | Path, detector: YOLOBobDetector, output_path: str | Path | None = None,
-                progress: Callable[[float], None] | None = None) -> ProcessingResult:
+                progress: Callable[[float], None] | None = None, max_gap_frames: int = 10) -> ProcessingResult:
     metadata = validate_video(path)
     capture = cv2.VideoCapture(str(path))
     if output_path:
@@ -112,14 +127,16 @@ def track_video(path: str | Path, detector: YOLOBobDetector, output_path: str | 
     finally:
         capture.release()
     raw = pd.DataFrame(rows)
-    data = interpolate_missing(raw)
+    data = interpolate_missing(raw, max_gap_frames)
     if output_path:
         _write_overlay_video(path, data, metadata, output_path)
     warnings = []
     if raw.empty or raw.tracking_status.eq("detected").sum() == 0:
         warnings.append("No bob was detected. Try a custom-trained bob model, a lower confidence threshold, or clearer footage.")
-    elif raw.tracking_status.eq("missing").mean() > .1:
+    elif data.tracking_status.eq("interpolated").mean() > .1:
         warnings.append("More than 10% of frames were interpolated; treat derived measurements cautiously.")
+    if data.tracking_status.eq("missing").any():
+        warnings.append("Some tracking gaps exceeded the interpolation limit and remain missing; analysis excludes them.")
     if raw.confidence.dropna().mean() < .45 if raw.confidence.notna().any() else False:
         warnings.append("Mean detection confidence is low. Check bounding boxes before using the analysis in a report.")
     return ProcessingResult(data=data, metadata=metadata, processed_video=Path(output_path) if output_path else None, warnings=warnings)

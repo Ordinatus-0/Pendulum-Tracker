@@ -17,6 +17,8 @@ streamlit run streamlit_app.py
 
 Open the local URL printed by Streamlit, upload an MP4/MOV/AVI/MKV video, set the detection options, then click **Run Detection & Tracking** and **Analyse Motion**. Run tests with `pytest`.
 
+The **Frame-by-frame x, y data** table is shown immediately after tracking. It includes frame number, timestamp, raw measurement columns, processed coordinates, bounding-box dimensions, confidence, and an explicit status. Choose the maximum interpolation gap in the sidebar: only short gaps bounded by detections are estimated; long, leading, and trailing gaps remain missing and are excluded from analysis.
+
 The automated test suite also creates and processes two independent, short synthetic MP4 pendulum videos. It verifies their metadata, successful frame-by-frame tracking, explicit interpolation during simulated occlusions, and annotated-video generation without requiring downloaded YOLO weights.
 
 ## Architecture
@@ -28,6 +30,8 @@ The automated test suite also creates and processes two independent, short synth
 
 ## Analysis and reliability notes
 
-The pivot is deliberately user-configurable: a camera cannot reliably infer a pivot without calibration and geometry assumptions. Raw pixel columns (`x_px`, `y_px`) are kept intact. Relative coordinates use the pivot as `(0,0)`, with +x right and +y upward. The application labels each frame `detected`, `missing`, or `interpolated`; it never treats filled values as original measurements.
+The pivot is deliberately user-configurable: a camera cannot reliably infer a pivot without calibration and geometry assumptions. Original measurements are preserved in `raw_x_px` and `raw_y_px`; the display coordinates (`x_px`, `y_px`) only differ for rows explicitly labelled `interpolated`. Relative coordinates use the pivot as `(0,0)`, with +x right and +y upward. The application labels each frame `detected`, `missing`, or `interpolated`; it never treats filled values as original measurements.
+
+Different pendulum bobs, lighting conditions, backgrounds, and camera angles need different detection models. The app accepts any compatible YOLOv8 weights and a class ID, so a lab can substitute a custom model trained on its own spherical, cylindrical, coloured, or otherwise non-COCO bob. The generic `yolov8n.pt` option is a convenience baseline, not a guarantee of pendulum-bob recognition.
 
 The spiral fit is reported only as reliable when its R² is at least 0.50 and its fitted decay is non-negative. It is an exploratory model, not generally the physical path of an ideal pendulum. Interpret damping and displacement in pixel units unless a camera calibration is supplied. Perspective, camera tilt, occlusions, motion blur, and low YOLO confidence can bias results.
