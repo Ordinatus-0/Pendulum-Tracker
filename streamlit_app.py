@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import tempfile
+from io import BytesIO
 from pathlib import Path
 
 import streamlit as st
@@ -72,6 +73,12 @@ if uploaded:
             save_figures(figures, export_dir)
             st.download_button("Export Data (CSV)", (export_dir / "tracking_data.csv").read_bytes(), "pendulum_tracking.csv", "text/csv")
             st.download_button("Export Summary (JSON)", (export_dir / "summary.json").read_bytes(), "pendulum_summary.json", "application/json")
-            st.info("PNG and SVG figures have been written to the local temporary export folder shown by your Streamlit session. Use the browser download controls for CSV/JSON; report figures can be saved from the displayed plots.")
+            figure_name = st.selectbox("Figure to export", list(figures))
+            png = BytesIO(); figures[figure_name].savefig(png, format="png", dpi=200, bbox_inches="tight")
+            svg = BytesIO(); figures[figure_name].savefig(svg, format="svg", bbox_inches="tight")
+            st.download_button("Export Figure (PNG)", png.getvalue(), f"{figure_name}.png", "image/png")
+            st.download_button("Export Figure (SVG)", svg.getvalue(), f"{figure_name}.svg", "image/svg+xml")
+            if result.processed_video and result.processed_video.exists():
+                st.download_button("Export Processed Video", result.processed_video.read_bytes(), "pendulum_tracked.mp4", "video/mp4")
 else:
     st.info("Upload a video to begin. For reliable automatic detection, supply custom YOLOv8 weights trained on your pendulum bob.")

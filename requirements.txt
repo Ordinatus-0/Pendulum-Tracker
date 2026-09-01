@@ -1,6 +1,7 @@
 streamlit>=1.38
 ultralytics>=8.3
-opencv-python>=4.10
+# Headless build keeps the local web application runnable on machines without a GUI/OpenGL runtime.
+opencv-python-headless>=4.10
 numpy>=1.26
 pandas>=2.2
 scipy>=1.13

@@ -17,6 +17,8 @@ streamlit run streamlit_app.py
 
 Open the local URL printed by Streamlit, upload an MP4/MOV/AVI/MKV video, set the detection options, then click **Run Detection & Tracking** and **Analyse Motion**. Run tests with `pytest`.
 
+The automated test suite also creates and processes two independent, short synthetic MP4 pendulum videos. It verifies their metadata, successful frame-by-frame tracking, explicit interpolation during simulated occlusions, and annotated-video generation without requiring downloaded YOLO weights.
+
 ## Architecture
 
 * `app/detection/yolo_detector.py` loads YOLOv8 and turns its boxes into `Detection` records. Supply custom weights and optionally a bob class ID in the UI; this is recommended because COCO's pretrained classes do not include pendulum bobs.

@@ -64,16 +64,30 @@ def _overlay(frame: np.ndarray, row: pd.Series, trail: list[tuple[int, int]]) ->
     return image
 
 
+def _write_overlay_video(path: str | Path, data: pd.DataFrame, metadata: VideoMetadata, output_path: Path) -> None:
+    """Render after interpolation so the output faithfully displays filled gaps."""
+    capture = cv2.VideoCapture(str(path))
+    writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), metadata.fps, (metadata.width, metadata.height))
+    trail: list[tuple[int, int]] = []
+    try:
+        for _, row in data.iterrows():
+            ok, frame = capture.read()
+            if not ok:
+                break
+            writer.write(_overlay(frame, row, trail))
+    finally:
+        capture.release()
+        writer.release()
+
+
 def track_video(path: str | Path, detector: YOLOBobDetector, output_path: str | Path | None = None,
                 progress: Callable[[float], None] | None = None) -> ProcessingResult:
     metadata = validate_video(path)
     capture = cv2.VideoCapture(str(path))
-    writer = None
     if output_path:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), metadata.fps, (metadata.width, metadata.height))
-    rows, trail, previous = [], [], None
+    rows, previous = [], None
     frame_number = 0
     try:
         while True:
@@ -92,17 +106,15 @@ def track_video(path: str | Path, detector: YOLOBobDetector, output_path: str | 
                        "x_px": np.nan, "y_px": np.nan, "bbox_width_px": np.nan, "bbox_height_px": np.nan,
                        "confidence": np.nan, "tracking_status": "missing"}
             rows.append(row)
-            if writer:
-                writer.write(_overlay(frame, pd.Series(row), trail))
             frame_number += 1
             if progress:
                 progress(min(frame_number / metadata.frame_count, 1.0))
     finally:
         capture.release()
-        if writer:
-            writer.release()
     raw = pd.DataFrame(rows)
     data = interpolate_missing(raw)
+    if output_path:
+        _write_overlay_video(path, data, metadata, output_path)
     warnings = []
     if raw.empty or raw.tracking_status.eq("detected").sum() == 0:
         warnings.append("No bob was detected. Try a custom-trained bob model, a lower confidence threshold, or clearer footage.")
