@@ -5,11 +5,12 @@ import tempfile
 from io import BytesIO
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 from app.analysis.motion import fit_best_radial_model, motion_summary, smooth_coordinates, transform_coordinates
 from app.detection.yolo_detector import YOLOBobDetector
-from app.export.files import save_figures, write_csv, write_summary
+from app.export.files import save_figures, write_csv, write_fit_tables, write_summary
 from app.tracking.video_tracker import validate_video, track_video
 from app.visualization.plots import best_model_figure, motion_figures, spiral_figure
 
@@ -32,7 +33,7 @@ if uploaded:
         col.metric(label, value)
     with st.sidebar:
         st.header("Detection settings")
-        weights = st.text_input("YOLO weights", "yolov8n.pt", help="The supplied Ultralytics YOLOv8n weights download automatically on first use. A custom one-class bob model is more reliable.")
+        weights = st.text_input("YOLO weights", "yolov8n.pt", help="The supplied Ultralytics YOLOv8n weights download automatically on first use. Train custom weights using bob_dataset.yaml for the included class-0 bob label.")
         confidence = st.slider("Minimum confidence", .05, .95, .25, .05)
         class_text = st.text_input("Custom bob class ID (optional)", "")
         smooth_window = st.slider("Smoothing window (frames)", 3, 101, 21, 2)
@@ -63,19 +64,28 @@ if uploaded:
             st.subheader("Lab-report summary")
             spiral = fit["spiral_fit"]
             st.json({**summary, "best_model": fit.get("label"), "best_model_r_squared": fit.get("r_squared"), "spiral_A": spiral.get("A"), "spiral_k": spiral.get("k"), "spiral_r_squared": spiral.get("r_squared"), "spiral_reliable": spiral["reliable"]})
-            st.caption("The best model is selected from constant, linear, quadratic, and exponential-spiral radius curves using AICc. The spiral result is shown separately rather than assumed.")
+            st.caption("The best model is selected from polynomial degrees 0–6, sine/cosine curves with 1–3 harmonics, and an exponential spiral using AICc. The spiral result is always shown separately rather than assumed.")
             if not fit["reliable"]: st.warning(f"Best model is unreliable: {fit.get('reason', 'insufficient agreement with data')}")
             if not spiral["reliable"]: st.warning(f"Spiral fit is unreliable: {spiral.get('reason', 'insufficient agreement with data')}")
             use_smooth = st.toggle("Show smoothed measured trajectories", value=True)
             figures = motion_figures(data, use_smooth); figures["best_model"] = best_model_figure(fit); figures["spiral_fit"] = spiral_figure(spiral)
+            st.subheader("Fit comparison table")
+            comparison = pd.DataFrame(fit.get("candidates", []))
+            if "aicc" in comparison:
+                comparison = comparison.sort_values("aicc", kind="stable")
+            if not comparison.empty:
+                st.dataframe(comparison[["label", "family", "formula", "r_squared", "aicc", "parameters"]], use_container_width=True, hide_index=True)
             st.subheader("Plots")
             for figure in figures.values(): st.pyplot(figure)
             export_dir = Path(tempfile.gettempdir()) / "pendulum_exports"
             write_csv(data, export_dir / "tracking_data.csv")
             write_summary(summary, fit, result.warnings + ["Perspective, camera angle, occlusion, and pixel calibration can bias results."], export_dir / "summary.json")
             save_figures(figures, export_dir)
+            table_paths = write_fit_tables(fit, export_dir)
             st.download_button("Export Data (CSV)", (export_dir / "tracking_data.csv").read_bytes(), "pendulum_tracking.csv", "text/csv")
             st.download_button("Export Summary (JSON)", (export_dir / "summary.json").read_bytes(), "pendulum_summary.json", "application/json")
+            for table_name, table_path in table_paths.items():
+                st.download_button(f"Export {table_name.replace('_', ' ').title()} (CSV)", table_path.read_bytes(), table_path.name, "text/csv")
             figure_name = st.selectbox("Figure to export", list(figures))
             png = BytesIO(); figures[figure_name].savefig(png, format="png", dpi=200, bbox_inches="tight")
             svg = BytesIO(); figures[figure_name].savefig(svg, format="svg", bbox_inches="tight")

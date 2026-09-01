@@ -1,0 +1,8 @@
+# Ultralytics dataset definition for the included custom pendulum-bob class.
+# Replace the paths with your labelled image directories before training, e.g.:
+# yolo detect train data=bob_dataset.yaml model=yolov8n.pt epochs=100
+path: ./datasets/pendulum_bob
+train: images/train
+val: images/val
+names:
+  0: bob

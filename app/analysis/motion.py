@@ -42,8 +42,20 @@ def _fit_quality(observed: np.ndarray, predicted: np.ndarray, parameter_count: i
     sample_count = len(observed)
     # A small floor makes the score well-defined for a perfect synthetic fit.
     aic = sample_count * np.log(max(residual_sum / sample_count, np.finfo(float).eps)) + 2 * parameter_count
+    if sample_count <= parameter_count + 1:
+        return float(r_squared), float("inf")
     correction = (2 * parameter_count * (parameter_count + 1)) / (sample_count - parameter_count - 1)
     return float(r_squared), float(aic + correction)
+
+
+def _sin_cos_fit(theta: np.ndarray, radius: np.ndarray, harmonics: int) -> tuple[np.ndarray, np.ndarray]:
+    """Fit a Fourier curve with a constant plus sine/cosine harmonics."""
+    columns = [np.ones_like(theta)]
+    for harmonic in range(1, harmonics + 1):
+        columns.extend((np.sin(harmonic * theta), np.cos(harmonic * theta)))
+    design = np.column_stack(columns)
+    coefficients, *_ = np.linalg.lstsq(design, radius, rcond=None)
+    return coefficients, design @ coefficients
 
 
 def fit_spiral(data: pd.DataFrame, use_smoothed: bool = True) -> dict:
@@ -71,8 +83,10 @@ def fit_best_radial_model(data: pd.DataFrame, use_smoothed: bool = True) -> dict
     """Compare plausible radial models and return the best-supported one.
 
     A pendulum trajectory is not assumed to be a spiral.  Models are scored with
-    AICc (not just R²), which penalises the quadratic curve for its extra degree
-    of freedom.  The exponential spiral remains a candidate and is returned as
+    AICc (not just R²), which penalises flexible curves for their extra degrees
+    of freedom. Polynomial degrees zero through six and Fourier sine/cosine
+    curves with one through three harmonics are evaluated. The exponential
+    spiral remains a candidate and is returned as
     ``spiral_fit`` so callers can always display that requested comparison.
     """
     r_col = "r_smooth_px" if use_smoothed and "r_smooth_px" in data else "r_px"
@@ -85,16 +99,24 @@ def fit_best_radial_model(data: pd.DataFrame, use_smoothed: bool = True) -> dict
     theta = theta - theta.min()
     radius = subset[r_col].to_numpy(dtype=float)
     candidates: list[dict] = []
-    for name, label, degree in (("constant", "Constant radius", 0), ("linear", "Linear radius", 1), ("quadratic", "Quadratic radius", 2)):
+    max_degree = min(6, len(radius) - 2)
+    for degree in range(max_degree + 1):
+        name = {0: "constant", 1: "linear", 2: "quadratic"}.get(degree, f"polynomial_{degree}")
+        label = ("Constant radius" if degree == 0 else f"Polynomial (degree {degree})")
         coefficients = np.polyfit(theta, radius, degree)
         predicted = np.polyval(coefficients, theta)
         r_squared, aicc = _fit_quality(radius, predicted, degree + 1)
-        candidates.append({"name": name, "label": label, "parameters": coefficients.tolist(), "r_squared": r_squared, "aicc": aicc, "theta": theta, "radius": radius, "predicted": predicted})
+        candidates.append({"name": name, "label": label, "family": "polynomial", "formula": f"r = polynomial degree {degree}", "parameters": coefficients.tolist(), "r_squared": r_squared, "aicc": aicc, "theta": theta, "radius": radius, "predicted": predicted})
+
+    for harmonics in range(1, min(3, (len(radius) - 2) // 2) + 1):
+        coefficients, predicted = _sin_cos_fit(theta, radius, harmonics)
+        r_squared, aicc = _fit_quality(radius, predicted, len(coefficients))
+        candidates.append({"name": f"sin_cos_{harmonics}", "label": f"Sine/cosine ({harmonics} harmonic{'s' if harmonics > 1 else ''})", "family": "sin_cos", "formula": f"r = c₀ + Σ[aₙ sin(nθ) + bₙ cos(nθ)], n=1…{harmonics}", "parameters": coefficients.tolist(), "r_squared": r_squared, "aicc": aicc, "theta": theta, "radius": radius, "predicted": predicted})
 
     spiral = fit_spiral(data, use_smoothed)
     if "predicted" in spiral:
         r_squared, aicc = _fit_quality(radius, spiral["predicted"], 2)
-        candidates.append({"name": "exponential_spiral", "label": "Exponential spiral", "parameters": [spiral["A"], spiral["k"]], "r_squared": r_squared, "aicc": aicc, "theta": theta, "radius": radius, "predicted": spiral["predicted"]})
+        candidates.append({"name": "exponential_spiral", "label": "Exponential spiral", "family": "spiral", "formula": "r = A exp(−kθ)", "parameters": [spiral["A"], spiral["k"]], "r_squared": r_squared, "aicc": aicc, "theta": theta, "radius": radius, "predicted": spiral["predicted"]})
 
     best = min(candidates, key=lambda candidate: candidate["aicc"])
     return {**best, "reliable": bool(best["r_squared"] >= .5), "spiral_fit": spiral,
