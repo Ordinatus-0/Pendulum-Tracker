@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from app.analysis.motion import exponential_spiral, fit_spiral, smooth_coordinates, transform_coordinates
+from app.analysis.motion import exponential_spiral, fit_best_radial_model, fit_spiral, smooth_coordinates, transform_coordinates
 
 
 def test_coordinate_transform_uses_upward_positive_y():
@@ -25,3 +25,12 @@ def test_spiral_fit_recovers_synthetic_parameters():
     assert result["reliable"]
     assert np.isclose(result["A"], 20, rtol=.01)
     assert np.isclose(result["k"], .15, rtol=.01)
+
+
+def test_best_model_can_select_a_non_spiral_curve():
+    theta = np.linspace(0, 4, 100)
+    data = pd.DataFrame({"r_px": 10 + 2 * theta, "theta_rad": theta})
+    result = fit_best_radial_model(data, use_smoothed=False)
+    assert result["name"] == "linear"
+    assert result["reliable"]
+    assert "spiral_fit" in result
