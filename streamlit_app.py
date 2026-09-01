@@ -7,11 +7,11 @@ from pathlib import Path
 
 import streamlit as st
 
-from app.analysis.motion import fit_spiral, motion_summary, smooth_coordinates, transform_coordinates
+from app.analysis.motion import fit_best_radial_model, motion_summary, smooth_coordinates, transform_coordinates
 from app.detection.yolo_detector import YOLOBobDetector
 from app.export.files import save_figures, write_csv, write_summary
 from app.tracking.video_tracker import validate_video, track_video
-from app.visualization.plots import motion_figures, spiral_figure
+from app.visualization.plots import best_model_figure, motion_figures, spiral_figure
 
 st.set_page_config(page_title="Pendulum Tracker", layout="wide")
 st.title("Pendulum Tracker")
@@ -32,7 +32,7 @@ if uploaded:
         col.metric(label, value)
     with st.sidebar:
         st.header("Detection settings")
-        weights = st.text_input("YOLO weights", "yolov8n.pt", help="Use a custom-trained bob model for best results.")
+        weights = st.text_input("YOLO weights", "yolov8n.pt", help="The supplied Ultralytics YOLOv8n weights download automatically on first use. A custom one-class bob model is more reliable.")
         confidence = st.slider("Minimum confidence", .05, .95, .25, .05)
         class_text = st.text_input("Custom bob class ID (optional)", "")
         smooth_window = st.slider("Smoothing window (frames)", 3, 101, 21, 2)
@@ -56,15 +56,18 @@ if uploaded:
         if st.button("Analyse Motion"):
             data = smooth_coordinates(transform_coordinates(result.data, pivot_x, pivot_y), smooth_window)
             st.session_state.analysis_data = data
-            st.session_state.fit = fit_spiral(data)
+            st.session_state.fit = fit_best_radial_model(data)
         if "analysis_data" in st.session_state:
             data, fit = st.session_state.analysis_data, st.session_state.fit
             summary = motion_summary(data)
             st.subheader("Lab-report summary")
-            st.json({**summary, "spiral_A": fit.get("A"), "spiral_k": fit.get("k"), "spiral_r_squared": fit.get("r_squared"), "spiral_reliable": fit["reliable"]})
-            if not fit["reliable"]: st.warning(f"Spiral fit is unreliable: {fit.get('reason', 'insufficient agreement with data')}")
+            spiral = fit["spiral_fit"]
+            st.json({**summary, "best_model": fit.get("label"), "best_model_r_squared": fit.get("r_squared"), "spiral_A": spiral.get("A"), "spiral_k": spiral.get("k"), "spiral_r_squared": spiral.get("r_squared"), "spiral_reliable": spiral["reliable"]})
+            st.caption("The best model is selected from constant, linear, quadratic, and exponential-spiral radius curves using AICc. The spiral result is shown separately rather than assumed.")
+            if not fit["reliable"]: st.warning(f"Best model is unreliable: {fit.get('reason', 'insufficient agreement with data')}")
+            if not spiral["reliable"]: st.warning(f"Spiral fit is unreliable: {spiral.get('reason', 'insufficient agreement with data')}")
             use_smooth = st.toggle("Show smoothed measured trajectories", value=True)
-            figures = motion_figures(data, use_smooth); figures["spiral_fit"] = spiral_figure(fit)
+            figures = motion_figures(data, use_smooth); figures["best_model"] = best_model_figure(fit); figures["spiral_fit"] = spiral_figure(spiral)
             st.subheader("Plots")
             for figure in figures.values(): st.pyplot(figure)
             export_dir = Path(tempfile.gettempdir()) / "pendulum_exports"

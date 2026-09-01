@@ -1,4 +1,4 @@
-"""Coordinate transforms, smoothing, damping estimates, and spiral fitting."""
+"""Coordinate transforms, smoothing, damping estimates, and model fitting."""
 from __future__ import annotations
 
 import numpy as np
@@ -34,6 +34,18 @@ def exponential_spiral(theta: np.ndarray, amplitude: float, decay: float) -> np.
     return amplitude * np.exp(-decay * theta)
 
 
+def _fit_quality(observed: np.ndarray, predicted: np.ndarray, parameter_count: int) -> tuple[float, float]:
+    """Return R² and AICc; the latter prevents complex models winning by default."""
+    residual_sum = float(np.sum((observed - predicted) ** 2))
+    total_sum = float(np.sum((observed - observed.mean()) ** 2))
+    r_squared = 1 - residual_sum / total_sum if total_sum else 0.0
+    sample_count = len(observed)
+    # A small floor makes the score well-defined for a perfect synthetic fit.
+    aic = sample_count * np.log(max(residual_sum / sample_count, np.finfo(float).eps)) + 2 * parameter_count
+    correction = (2 * parameter_count * (parameter_count + 1)) / (sample_count - parameter_count - 1)
+    return float(r_squared), float(aic + correction)
+
+
 def fit_spiral(data: pd.DataFrame, use_smoothed: bool = True) -> dict:
     r_col = "r_smooth_px" if use_smoothed and "r_smooth_px" in data else "r_px"
     theta_col = "theta_smooth_rad" if use_smoothed and "theta_smooth_rad" in data else "theta_rad"
@@ -53,6 +65,41 @@ def fit_spiral(data: pd.DataFrame, use_smoothed: bool = True) -> dict:
     return {"reliable": bool(r_squared >= .5 and params[1] >= 0), "A": float(params[0]), "k": float(params[1]), "r_squared": float(r_squared),
             "theta": theta, "radius": radius, "predicted": predicted,
             "reason": "Fit R² is below 0.50 or the fitted decay is non-physical." if r_squared < .5 or params[1] < 0 else ""}
+
+
+def fit_best_radial_model(data: pd.DataFrame, use_smoothed: bool = True) -> dict:
+    """Compare plausible radial models and return the best-supported one.
+
+    A pendulum trajectory is not assumed to be a spiral.  Models are scored with
+    AICc (not just R²), which penalises the quadratic curve for its extra degree
+    of freedom.  The exponential spiral remains a candidate and is returned as
+    ``spiral_fit`` so callers can always display that requested comparison.
+    """
+    r_col = "r_smooth_px" if use_smoothed and "r_smooth_px" in data else "r_px"
+    theta_col = "theta_smooth_rad" if use_smoothed and "theta_smooth_rad" in data else "theta_rad"
+    subset = data[[r_col, theta_col]].dropna()
+    if len(subset) < 8 or subset[r_col].max() <= 0:
+        return {"reliable": False, "reason": "Too few valid points for model fitting.", "spiral_fit": fit_spiral(data, use_smoothed)}
+
+    theta = subset[theta_col].to_numpy(dtype=float)
+    theta = theta - theta.min()
+    radius = subset[r_col].to_numpy(dtype=float)
+    candidates: list[dict] = []
+    for name, label, degree in (("constant", "Constant radius", 0), ("linear", "Linear radius", 1), ("quadratic", "Quadratic radius", 2)):
+        coefficients = np.polyfit(theta, radius, degree)
+        predicted = np.polyval(coefficients, theta)
+        r_squared, aicc = _fit_quality(radius, predicted, degree + 1)
+        candidates.append({"name": name, "label": label, "parameters": coefficients.tolist(), "r_squared": r_squared, "aicc": aicc, "theta": theta, "radius": radius, "predicted": predicted})
+
+    spiral = fit_spiral(data, use_smoothed)
+    if "predicted" in spiral:
+        r_squared, aicc = _fit_quality(radius, spiral["predicted"], 2)
+        candidates.append({"name": "exponential_spiral", "label": "Exponential spiral", "parameters": [spiral["A"], spiral["k"]], "r_squared": r_squared, "aicc": aicc, "theta": theta, "radius": radius, "predicted": spiral["predicted"]})
+
+    best = min(candidates, key=lambda candidate: candidate["aicc"])
+    return {**best, "reliable": bool(best["r_squared"] >= .5), "spiral_fit": spiral,
+            "candidates": [{key: value for key, value in candidate.items() if key not in {"theta", "radius", "predicted"}} for candidate in candidates],
+            "reason": "Best model R² is below 0.50." if best["r_squared"] < .5 else ""}
 
 
 def motion_summary(data: pd.DataFrame) -> dict:

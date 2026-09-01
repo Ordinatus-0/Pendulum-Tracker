@@ -45,3 +45,16 @@ def spiral_figure(fit: dict) -> plt.Figure:
     ax.plot(fit["theta"], fit["predicted"], color="#d32f2f", lw=2, label=f"model: A exp(−kθ), R²={fit['r_squared']:.3f}")
     _style(ax, "Angle θ − θ₀ (rad)", "Radial distance r (px)", "Exponential spiral fit")
     return fig
+
+
+def best_model_figure(model: dict) -> plt.Figure:
+    """Show the winning radial model without implying that it is a spiral."""
+    fig, ax = plt.subplots(figsize=(7, 5), layout="constrained")
+    if "theta" not in model:
+        ax.text(.5, .5, model.get("reason", "No model fit available."), ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return fig
+    ax.scatter(model["theta"], model["radius"], s=12, alpha=.55, label="measured trajectory")
+    ax.plot(model["theta"], model["predicted"], color="#2e7d32", lw=2, label=f"best: {model['label']}, R²={model['r_squared']:.3f}")
+    _style(ax, "Angle θ − θ₀ (rad)", "Radial distance r (px)", "Best-supported radial model")
+    return fig

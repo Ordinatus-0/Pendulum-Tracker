@@ -17,9 +17,20 @@ def write_csv(data: pd.DataFrame, destination: str | Path) -> Path:
 
 def write_summary(summary: dict, fit: dict, warnings: list[str], destination: str | Path) -> Path:
     path = Path(destination); path.parent.mkdir(parents=True, exist_ok=True)
-    clean = lambda item: None if isinstance(item, (float, np.floating)) and not np.isfinite(item) else item
+    def clean(item):
+        if isinstance(item, (float, np.floating)):
+            return None if not np.isfinite(item) else float(item)
+        if isinstance(item, np.integer):
+            return int(item)
+        if isinstance(item, np.ndarray):
+            return item.tolist()
+        if isinstance(item, dict):
+            return {key: clean(value) for key, value in item.items() if key not in {"theta", "radius", "predicted"}}
+        if isinstance(item, list):
+            return [clean(value) for value in item]
+        return item
     payload = {"tracking_summary": {key: clean(value) for key, value in summary.items()},
-               "spiral_fit": {key: clean(value) for key, value in fit.items() if key not in {"theta", "radius", "predicted"}}, "warnings": warnings}
+               "model_fit": clean(fit), "warnings": warnings}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
 
